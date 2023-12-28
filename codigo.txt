@@ -1,0 +1,160 @@
+if (!require("multiUS"))  install.packages("multiUS")
+library('multiUS')
+
+#parámetros configurables:
+PORCENTAJE = 10
+COLUMNAS_MODIFICAR = 1
+
+#Definir la ruta del dataset:
+#file = file.choose();
+fileName = "C:/INTELIGENCIA DE NEGOCIOS/PREPROCESAMIENTO/bupa.csv"
+
+bupa_df_original = read.table(fileName, sep=",", dec=".", na.strings = "?", header = TRUE)
+bupa = bupa_df_original
+
+#Obtener el 10% de las filas existentes en el conjunto de datos:
+n_datos_faltantes = round(nrow(bupa) * PORCENTAJE /100)
+indice_filas_modificar = sample(nrow(bupa), n_datos_faltantes, replace = FALSE)
+
+#Seleccionar una columna número aleatoria que no sea variable de clase
+indice_columna_modificar = sample(ncol(bupa) - 1, COLUMNAS_MODIFICAR, replace = FALSE)
+
+#Colocar los datos faltantes:
+bupa[indice_filas_modificar, indice_columna_modificar] = NA
+
+#Obtener el dataset con las observaciones no nulas:
+bupa.no_na = bupa[!is.na(bupa[, indice_columna_modificar]), indice_columna_modificar]
+
+#Realizar la imputación con las técnicas (media, mediana, knn y regresión lineal)
+bupa.mimp = mimp(bupa, "media")
+bupa.mdimp = mimp(bupa, "mediana")
+bupa.rlimp = mimp(bupa, "regresion lineal")
+
+bupa.knnimp = multiUS::KNNimp(bupa, k=10);
+
+#Comparación de los métodos de imputación con respecto
+#a los valores reales para conocer el error de cada uno.
+error.mimp = rmspe(bupa_df_original[, indice_columna_modificar], bupa.mimp[, indice_columna_modificar])
+error.mdimp = rmspe(bupa_df_original[, indice_columna_modificar], bupa.mdimp[, indice_columna_modificar])
+error.rlimp = rmspe(bupa_df_original[, indice_columna_modificar], bupa.rlimp[, indice_columna_modificar])
+error.knnimp = rmspe(bupa_df_original[, indice_columna_modificar], bupa.knnimp[, indice_columna_modificar])
+
+#Adjuntar los datos para mostrarlos en forma de gráficos
+metodos_imputacion = c("Media", "Mediana", "knn", "Reg. lineal")
+error_por_metodo = c(c(error.mimp, error.mdimp, error.rlimp, error.knnimp)) * 100
+
+df_resumen_metodos <- data.frame (metodos_imputacion, error_por_metodo)
+
+#Gráfico de barras para el ánalisis comparativo de los métodos de 
+#imputación basados en el error calculado con error cuadrático medio (RMSE)
+barplot(error_por_metodo, names.arg = metodos_imputacion, 
+        xlab = "Método de imputación", 
+        ylab = "Porcentaje de error (%)", 
+        main = "Comparación de métodos de imputación",
+        col= "#39BFD8")
+
+
+#Cálcular el error cuadrático medio (Root mean squared deviation)
+rmse = function (datos_originales, datos_predecidos){
+  if (length(datos_originales) != length(datos_predecidos))
+    stop("Las dimensiones de los datos son diferentes.")
+
+  FILAS = length(datos_originales)
+    
+  error = sqrt(sum(datos_originales - datos_predecidos)^2/FILAS)
+  return(error)
+}
+
+#Cálcular el error porcentual cuadrático medio (Root mean squared percent error)
+rmspe = function (datos_originales, datos_predecidos){
+  if (length(datos_originales) != length(datos_predecidos))
+    stop("Las dimensiones de los datos son diferentes.")
+  
+  FILAS = length(datos_originales)
+  
+  error = sqrt(sum((datos_originales - datos_predecidos)/datos_originales)^2/FILAS)
+  return(error)
+}
+
+
+regresion_lineal = function (data, x, y){
+  media_x = mean(x)
+  media_y = mean(y)
+  
+  #Coeficientes de la función lineal de la forma: b0 + b1 * a
+  #donde a es el valor que desea evaluar en el conjunto de datos
+  #y pertenece a la variable independiente (x).
+  b1 = sum((x - media_x) * (y - media_y)) / sum((x - media_x)^2)
+  b0 = media_y - b1 * media_x
+  
+  
+  #Evaluar en todos los puntos del os datos ingresados
+  prediccion = b0 + data * b1
+  
+  return(prediccion)
+}
+
+
+
+mimp = function(data, metodo = "mediana", columna_categorica = 0){
+  #Variables inciales
+  FILAS = nrow(data)
+  COLUMNAS = ncol(data)
+  
+  #Si no se definió una columna categórica, obtener una propia
+  #basada en la frecuencia de valores (varianza).
+  if (columna_categorica == 0)
+    varianza_columna = sapply(data, var)
+  menor_varianza = which.min(varianza_columna)
+  columna_categorica = menor_varianza
+  
+  
+  #Obtener las diferentes variables categórias de la variable 
+  #nominal o categórica
+  observaciones_unicas = unique(data[,columna_categorica])
+  
+  #Crear submatrices segmentadas por las variables categóricas
+  for (observaciones in observaciones_unicas) {
+    observacion_actual = observaciones
+    
+    #Índices de filas donde se encuentran esas observaciones
+    filas_por_categoria = which(data[, columna_categorica] == observacion_actual, arr.ind = T)
+    
+    subamatriz = data[filas_por_categoria, ]
+    columnas_con_nulos = which(colSums(is.na(subamatriz[, 1:COLUMNAS])) > 0, arr.ind = T)
+    
+    #Calcular el promedio por las columnas donde existen nulos:
+    for (columna in columnas_con_nulos){
+      columna_actual = columna
+      
+      #Vector de índices de filas del conjunto de datos original
+      indices_filas_nulas_c = which(is.na(data[, columna_actual]) == TRUE, arr.ind = TRUE)
+      
+      #Vector de índices de filas del subconjunto de datos
+      indices_filas_nulas = which(is.na(subamatriz[, columna_actual]) == TRUE, arr.ind = TRUE)
+      
+      resultado_por_categoria = 0
+      
+      if (metodo == "media")
+        resultado_por_categoria = mean(subamatriz[-indices_filas_nulas, columna_actual])
+      else if (metodo == "mediana")
+        resultado_por_categoria = median(subamatriz[-indices_filas_nulas, columna_actual])
+      else if (metodo == "moda")
+        resultado_por_categoria = moda(subamatriz[-indices_filas_nulas, columna_actual])
+      else if (metodo == "regresion lineal")
+      {
+        #donde, x es la variable independiendete 
+        #e y es la dependiente (normalmente categórica).
+        x = data[-indices_filas_nulas_c, columna_categorica]
+        y = data[-indices_filas_nulas_c, columna_actual]
+        
+        prediccion = regresion_lineal(data[, columna_categorica], x, y)
+        
+        resultado_por_categoria = prediccion[indices_filas_nulas_c]
+      }
+      #Actualizar los datos del dataframe original
+      data[indices_filas_nulas_c, columna_actual] = resultado_por_categoria
+    }
+  }
+  return (data)
+}
